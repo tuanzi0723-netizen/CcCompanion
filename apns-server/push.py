@@ -3354,8 +3354,15 @@ class PushHandler(BaseHTTPRequestHandler):
                 stdin=subprocess.PIPE,
             )
             p.communicate(input=text.encode("utf-8"))
+            # bracketed paste (-p) 会被 Claude Code 当成"粘贴事件"触发剪贴板/图片检测,
+            # 在 WSL+tmux 注入场景下会误判出一张读不出内容的幽灵图片 (尺寸随机变化)。
+            # 单行消息走不带 -p 的 paste (等同"键入"), 不触发误判; 多行才用 -p 保证不被
+            # 逐行提交。绝大多数 ccc 聊天是单行, 所以默认就清爽了。
+            paste_cmd = ["tmux", "paste-buffer", "-t", session]
+            if "\n" in text:
+                paste_cmd.append("-p")
             paste = subprocess.run(
-                ["tmux", "paste-buffer", "-t", session, "-p"],
+                paste_cmd,
                 capture_output=True, text=True, timeout=3,
             )
             if paste.returncode != 0:
