@@ -48,6 +48,7 @@ from typing import Any
 
 from jwt_helper import APNsJWT
 from apns_client import APNsClient, APNsResponse
+from bark_client import BarkClient, resolve_device_key
 from token_store import TokenStore
 from device_token_store import DeviceTokenStore
 from task_queue import TaskQueue
@@ -294,6 +295,14 @@ class ServerState:
         self.allowed_ips: list[str] = list(server_cfg.get("allowed_ips", []) or [])
         self.default_session: str = server_cfg.get("default_session", "cc")
 
+        # Bark fallback (零 Apple Developer 推送兜底). APNs 没配 / 推不通时回落到这。
+        bark_cfg = config.get("bark", {})
+        self.bark = BarkClient(
+            device_key=resolve_device_key(bark_cfg.get("device_key")),
+            base_url=bark_cfg.get("base_url", "https://api.day.app"),
+        )
+        self.bark_enabled: bool = self.bark.enabled
+
         if self.apns_enabled:
             self.jwt = APNsJWT(
                 p8_path=self.p8_path,
@@ -411,8 +420,9 @@ class ServerState:
         self.config: dict[str, Any] = config
 
         logger.info(
-            "loaded apns_enabled=%s bundle_id=%s sandbox=%s store=%s tokens=%d tasks_active=%s",
+            "loaded apns_enabled=%s bark_enabled=%s bundle_id=%s sandbox=%s store=%s tokens=%d tasks_active=%s",
             self.apns_enabled,
+            self.bark_enabled,
             self.bundle_id or "(none)",
             self.sandbox,
             self.token_store_path,
@@ -423,6 +433,8 @@ class ServerState:
     def shutdown(self):
         if self.client:
             self.client.close()
+        if self.bark:
+            self.bark.close()
 
 
 # ---------- helpers ----------
@@ -1156,33 +1168,54 @@ class PushHandler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "new": is_new, "total": len(self.state.device_tokens)})
 
     def _send_chat_notification(self, title: str, body_text: str):
-        """向所有已注册设备发 standard APNs banner 通知 (non-Live-Activity)."""
-        if not self.state.apns_enabled:
-            return
-        device_tokens = self.state.device_tokens.all_tokens()
-        if not device_tokens:
-            return
-        payload = {
-            "aps": {
-                "alert": {"title": title, "body": body_text},
-                "badge": 1,
-                "sound": "default",
+        """向所有已注册设备发 standard APNs banner 通知 (non-Live-Activity).
+
+        APNs 不可用 (没配 [apns]) 或一条都没推成功时, 回落到 Bark
+        (零 Apple Developer 兜底)。两条通道都没配则静默 no-op。
+        """
+        apns_delivered = False
+        if self.state.apns_enabled:
+            device_tokens = self.state.device_tokens.all_tokens()
+            payload = {
+                "aps": {
+                    "alert": {"title": title, "body": body_text},
+                    "badge": 1,
+                    "sound": "default",
+                }
             }
-        }
-        for token in device_tokens:
-            try:
-                resp = self.state.notification_client.push_notification(
-                    push_token=token,
-                    payload=payload,
-                )
-                if resp.status == 410 or (resp.status == 400 and "BadDeviceToken" in (resp.reason or "")):
-                    logger.info("device_token invalid (status=%d), removing token=%s...", resp.status, token[:8])
-                    self.state.device_tokens.remove(token)
-                elif not resp.ok:
-                    logger.warning("device push failed status=%d token=%s... reason=%s",
-                                   resp.status, token[:8], resp.reason)
-            except Exception as e:
-                logger.warning("device push exception token=%s...: %s", token[:8], e)
+            for token in device_tokens:
+                try:
+                    resp = self.state.notification_client.push_notification(
+                        push_token=token,
+                        payload=payload,
+                    )
+                    if resp.status == 410 or (resp.status == 400 and "BadDeviceToken" in (resp.reason or "")):
+                        logger.info("device_token invalid (status=%d), removing token=%s...", resp.status, token[:8])
+                        self.state.device_tokens.remove(token)
+                    elif not resp.ok:
+                        logger.warning("device push failed status=%d token=%s... reason=%s",
+                                       resp.status, token[:8], resp.reason)
+                    else:
+                        apns_delivered = True
+                except Exception as e:
+                    logger.warning("device push exception token=%s...: %s", token[:8], e)
+
+        # APNs 没启用 / 没设备 token / 全部推送失败 → Bark 兜底
+        if not apns_delivered:
+            self._send_bark_notification(title, body_text)
+
+    def _send_bark_notification(self, title: str, body_text: str):
+        """Bark 兜底推送。未配置 device key 时静默跳过。"""
+        if not self.state.bark_enabled:
+            return
+        try:
+            resp = self.state.bark.push(title, body_text)
+            if resp.ok:
+                logger.info("bark push: status=%d", resp.status)
+            else:
+                logger.warning("bark push failed status=%d body=%s", resp.status, resp.body[:200])
+        except Exception as e:
+            logger.warning("bark push exception: %s", e)
 
     def _handle_thinking_post(self, body: dict[str, Any]):
         try:

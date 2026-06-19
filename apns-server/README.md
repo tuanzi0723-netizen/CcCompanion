@@ -74,13 +74,21 @@ cp config.example.toml config.toml
 #   shared_secret  写接口鉴权 (留空 server 自动生成并写 ~/.ots/secret)
 #   strict_auth    建议 true
 #   [apns] 段     如果你有 Apple Developer 账号填 p8/team_id/key_id/bundle_id; 没有就跳过, 走 Bark fallback
+#   [bark] 段     没 [apns] 的话填 device_key 走 Bark 推送 (零 Apple Developer)
 ```
 
-### 3. Apple Developer p8 (可选, 不要 Bark 也行)
+### 3. 推送通道: APNs 或 Bark (二选一, 都不配则只能前台轮询)
 
-如果你想走原生 APNs 推送, 详见 [`../docs/01_apple_developer_p8_checklist.md`](../docs/01_apple_developer_p8_checklist.md)。
+**A. Apple Developer p8 (原生 APNs)** — 想走原生 APNs 推送, 详见 [`../docs/01_apple_developer_p8_checklist.md`](../docs/01_apple_developer_p8_checklist.md)。
 
-没 Apple Developer 账号 → 跳过, 装 [Bark](https://github.com/Finb/Bark) 走 free fallback。详见根目录 `README.md` 的 Quick Start 段。
+**B. Bark fallback (零 Apple Developer, 推荐没 Mac / 没开发者账号的用户)** — iPhone 装 [Bark](https://github.com/Finb/Bark), 打开拿一个 device URL `https://api.day.app/<KEY>/`, 把 `<KEY>` 那段填进 `config.toml` 的 `[bark] device_key`。也可以不写 config 改用环境变量 `BARK_DEVICE_KEY` 或 `~/.bark_device_key` 文件, server 按这个优先级找。
+
+两条都配时 APNs 是主路, 推不通才回落 Bark。只配 Bark 时它就是唯一推送通道。两条都不配 server 不报错, 但 iPhone 只能靠 app 前台轮询拉消息 (后台 / 锁屏收不到)。验证 Bark 通了:
+
+```bash
+curl "https://api.day.app/<你的 KEY>/test_from_ccc_setup"
+# iPhone 立刻弹一条标题 test_from_ccc_setup 的推送就对了
+```
 
 ### 4. Run
 

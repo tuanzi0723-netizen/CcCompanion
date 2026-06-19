@@ -23,6 +23,17 @@ bundle_id = "com.example.cccompanion"
 # 真机测试常规走 sandbox 拿 device + Live Activity push token 时 token 是 sandbox-only
 sandbox = true
 
+[bark]
+# Bark 兜底推送 (零 Apple Developer)。没 .p8 / 不想配 [apns] 的用户走这条。
+# iPhone 装 Bark app (App Store 搜 Bark, 作者 fin), 打开拿一个 device URL,
+# 形如 https://api.day.app/AbCdEfGhIjKlMnOpQrSt/ 把末尾那段 hex 填到下面。
+# device_key 留空时 server 会按顺序找: 环境变量 BARK_DEVICE_KEY -> ~/.bark_device_key 文件。
+# APNs 配了的话 Bark 仅在 APNs 推不通时兜底; 没配 APNs 则 Bark 是唯一推送通道。
+device_key = ""
+
+# 自部署 Bark relay 改这里, 默认走官方 https://api.day.app
+base_url = "https://api.day.app"
+
 [server]
 # 监听地址 默认 127.0.0.1 (内网 only)
 # 跨设备访问改 0.0.0.0 + 配 shared_secret 或者用 Tailscale / ZeroTier

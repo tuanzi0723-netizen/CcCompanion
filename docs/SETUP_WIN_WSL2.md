@@ -11,7 +11,9 @@
 - Windows 10 22H2+ 或 Windows 11. Win 10 老版本先在"设置 → Windows 更新"升到 22H2 再继续
 - 内存 8 GB 及以上
 - 至少 30 GB 空闲磁盘. Ubuntu 镜像, Node, Python, Claude Code, model cache 加起来吃这么多
-- 一台 Mac 在手边. 因为 Apple Push 的 `.p8` 私钥要从 Mac mini 的 `secrets/` 目录 scp 过来. 若你只想本地连不走 APNs 推送, 可跳过这部分
+- 推送方式决定要不要 Mac:
+  - 走 **Bark 兜底** (推荐没 Mac / 没 Apple Developer 账号的用户) → **不需要 Mac**, 不需要 `.p8`, iPhone 装个 Bark app 就行。见第 5 步选 B。
+  - 走 **原生 APNs** → 需要一台 Mac 在手边, 因为 `.p8` 私钥要从 Mac 的 `secrets/` 目录 scp 过来。
 
 后面所有"WSL 内"命令在 Ubuntu 终端跑, "PowerShell 管理员模式"命令在 Windows 主机的 PowerShell 跑. 不要混.
 
@@ -197,9 +199,15 @@ python -c "import jwt, cryptography, httpx, tomllib; print('deps OK')"
 cp config.example.toml config.toml
 ```
 
-`config.toml` 改 4 个核心字段, 用 nano 或者 vim:
+`config.toml` 改核心字段, 用 nano 或者 vim。
+
+**推送通道二选一:**
+
+- **有 Apple Developer 账号** → 填 `[apns]` 段 (需要从 Mac 拷 `.p8`, 见第 5 步末尾)。
+- **没 Apple Developer 账号 (Windows 用户常见)** → **跳过 `[apns]`**, 改填 `[bark]`。iPhone 装 [Bark](https://github.com/Finb/Bark) app, 打开拿一个 device URL `https://api.day.app/<KEY>/`, 把 `<KEY>` 那段填到下面。这条不需要 Mac、不需要 `.p8`、不需要花钱。
 
 ```toml
+# --- 选 A: 原生 APNs (有 Apple Developer 账号才填这段) ---
 [apns]
 p8_path = "~/CcCompanion/apns-server/secrets/AuthKey_XXXXXXXXXX.p8"
 team_id = "XXXXXXXXXX"
@@ -207,11 +215,23 @@ key_id = "XXXXXXXXXX"
 bundle_id = "com.starryfield.CcCompanion"
 sandbox = false   # TestFlight / App Store build 走 false. Xcode debug build 走 true
 
+# --- 选 B: Bark 兜底 (没 Apple Developer 账号填这段, 上面 [apns] 整段删掉或留空) ---
+[bark]
+device_key = "AbCdEfGhIjKlMnOpQrSt"   # Bark app 给的 URL 末尾那段 hex
+base_url = "https://api.day.app"        # 自部署 Bark relay 才改
+
 [server]
 host = "0.0.0.0"        # WSL 内必须 0.0.0.0, 不能 127.0.0.1, 否则 netsh portproxy 抓不到
 port = 8795
 shared_secret = "<生成一个>"
 strict_auth = true
+```
+
+走 Bark 的话, 改完 config 先在 WSL 里测一下 Bark 通不通 (出网正常就行):
+
+```bash
+curl "https://api.day.app/<你的 KEY>/test_from_ccc_setup"
+# iPhone 立刻弹一条标题 test_from_ccc_setup 的推送就对了
 ```
 
 生成 `shared_secret` 用 Python:
