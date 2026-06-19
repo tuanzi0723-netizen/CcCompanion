@@ -171,9 +171,12 @@ def main() -> None:
     transcript_path = data.get("transcript_path") or ""
     lines = read_transcript_lines(transcript_path) if (transcript_path and os.path.exists(transcript_path)) else []
 
-    text = (data.get("last_assistant_message") or "").strip()
-    if not text and lines:
-        text = assistant_text_from_lines(lines)
+    # 优先用 transcript 的 text 块 (干净, 不含 thinking); 没有再退回 last_assistant_message。
+    # --thinking-display summarized 下 last_assistant_message 会把思考摘要也带上, 直接用会
+    # 让思考漏进聊天气泡, 所以 transcript 在手时一律以它为准。
+    text = assistant_text_from_lines(lines) if lines else ""
+    if not text:
+        text = (data.get("last_assistant_message") or "").strip()
     if not text:
         log("empty assistant text — skip")
         return
